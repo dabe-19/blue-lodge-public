@@ -1237,6 +1237,23 @@ discord_generate_response() {
         is_owner=1
     fi
 
+    # Owner-only inline /train moderation & head-to-head benchmark shortcut (zero LLM invocation)
+    if [ "$is_owner" -eq 1 ] && [[ "$prompt" =~ ^[[:space:]]*/train([[:space:]]|$) ]] && [ -f "$LODGE_DIR/commands/train.sh" ]; then
+        local _tr_rest _tr_out
+        _tr_rest="${prompt#*/train}"
+        _tr_rest="${_tr_rest#"${_tr_rest%%[![:space:]]*}"}"
+        _tr_out=$(TRAIN_FROM_DISCORD=1 bash "$LODGE_DIR/commands/train.sh" "$_tr_rest" 2>&1 || true)
+        [ -z "$_tr_out" ] && _tr_out="(No output from /train)"
+        if [ -n "$session_log" ]; then
+            printf "[%s] ── Owner executed inline /train command (%s).\n" "$(date '+%H:%M:%S')" "${_tr_rest:-help}" >> "$session_log"
+        fi
+        [ -n "$out_reply_file" ] && printf '%s\n' "$_tr_out" > "$out_reply_file"
+        printf '%s\n' "$_tr_out"
+        discord_history_append "$channel_id" "user" "$author" "$prompt" "$author_id"
+        discord_history_append "$channel_id" "assistant" "George" "$_tr_out" "$author_id"
+        return 0
+    fi
+
     # Owner-only inline /rep moderation & theme command shortcut (zero LLM invocation)
     if [ "$is_owner" -eq 1 ] && [[ "$prompt" =~ ^[[:space:]]*/rep([[:space:]]|$) ]] && [ -f "$LODGE_DIR/commands/rep.sh" ]; then
         local _rep_rest _rep_out

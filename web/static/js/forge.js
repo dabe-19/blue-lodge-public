@@ -251,6 +251,7 @@
     const driveFolderIn = el('input', { type: 'text', className: 'guild-input', style: 'min-width:220px;', value: policy.drive_backup_folder || 'BlueLodge/models/adapters' });
     const autoDriveCb = el('input', { type: 'checkbox', checked: Boolean(policy.auto_backup_drive) });
     const autoHfCb = el('input', { type: 'checkbox', checked: Boolean(policy.auto_backup_hf) });
+    const autoBenchCb = el('input', { type: 'checkbox', checked: Boolean(policy.auto_benchmark_on_merge) });
 
     const policyCard = el('div', { className: 'forge-card' }, [
       el('div', { className: 'forge-card-head' }, [
@@ -275,6 +276,7 @@
                 drive_backup_folder: driveFolderIn.value.trim() || 'BlueLodge/models/adapters',
                 auto_backup_drive: Boolean(autoDriveCb.checked),
                 auto_backup_hf: Boolean(autoHfCb.checked),
+                auto_benchmark_on_merge: Boolean(autoBenchCb.checked),
               };
               const { data } = await apiJson('/api/training/policy', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -299,6 +301,7 @@
       ]),
       el('div', { style: 'display:flex;flex-wrap:wrap;gap:14px;margin-top:4px;' }, [
         el('label', { className: 'eco-check-label' }, [sleepCb, 'Enable scheduled Sleep-Cycle consolidation']),
+        el('label', { className: 'eco-check-label' }, [autoBenchCb, 'Auto-run 7-pillar H2H benchmark after Colab SVD-32 merge']),
         el('label', { className: 'eco-check-label' }, [autoDriveCb, 'Auto-backup promoted SVD-32 to Google Drive']),
         el('label', { className: 'eco-check-label' }, [autoHfCb, 'Auto-backup promoted SVD-32 to Private HF Hub']),
       ]),
@@ -335,7 +338,11 @@
       history.forEach((r) => {
         const gpus = (r.selected_gpus || []).join(', ') || (r.backend === 'local' ? 'local-cuda' : '—');
         const b = r.benchmark;
-        const bTxt = b ? `${b.candidate_score ?? b.overall_score ?? '?'}% (Δ ${b.composite_delta ?? 0}%)` : 'Unscored';
+        const bs = r.benchmark_status;
+        const isBenchRunning = Boolean(bs && bs.status === 'running');
+        const bTxt = isBenchRunning
+          ? `Running: ${bs.stage || 'benchmarking'}...`
+          : (b ? `${b.candidate_score ?? b.overall_score ?? '?'}% (Δ ${Number(b.composite_delta ?? 0) >= 0 ? '+' : ''}${b.composite_delta ?? 0}% · ${b.passed ? 'PASS' : 'FAIL'})` : 'Unscored');
         const actions = el('div', { style: 'display:flex;flex-wrap:wrap;gap:4px;' });
 
         const actBtn = (label, cls, action, extra) => el('button', {
@@ -362,6 +369,26 @@
         });
 
         if (r.gate_status === 'pending_approval') {
+          if (!isBenchRunning) {
+            actions.appendChild(actBtn(b ? 'RE-BENCH H2H' : 'BENCHMARK H2H', '', 'benchmark'));
+          }
+          if (b && b.pillars) {
+            actions.appendChild(el('button', {
+              type: 'button',
+              className: 'guild-btn',
+              style: 'padding:3px 7px;font-size:10px;',
+              text: 'VIEW H2H',
+              on: {
+                click: () => {
+                  state.h2hResult = b;
+                  state.h2hRunName = r.name;
+                  state.tab = 'bench';
+                  setConsole(b);
+                  renderForge();
+                },
+              },
+            }));
+          }
           actions.appendChild(actBtn('ACCEPT', 'primary', 'approve'));
           actions.appendChild(actBtn('DENY', 'danger', 'deny', { reason: 'Rejected in Forge Tier B gate' }));
         }
@@ -847,6 +874,20 @@
 
   function renderBenchTab(d) {
     const scs = d.scorecards || [];
+    const pendingRuns = ((d.gate_queue && d.gate_queue.pending) || []);
+    const allRuns = ((d.gate_queue && d.gate_queue.history) || []);
+    const selCandRun = el('select', { className: 'guild-input', style: 'flex:1;min-width:220px;' });
+    pendingRuns.forEach((r) => {
+      const b = r.benchmark;
+      const tag = b ? ` [scored: ${b.candidate_score}%, Δ ${Number(b.composite_delta) >= 0 ? '+' : ''}${b.composite_delta}%]` : ' [unscored]';
+      selCandRun.appendChild(el('option', { value: r.name, text: `${r.name} (${r.model_slug})${tag}` }));
+    });
+    if (pendingRuns.length === 0) {
+      selCandRun.appendChild(el('option', { value: '', text: 'No staged Tier B candidates pending' }));
+    }
+    const notifyCb = el('input', { type: 'checkbox', checked: true });
+    const reBaseCb = el('input', { type: 'checkbox', checked: false });
+
     const selA = el('select', { className: 'guild-input', style: 'flex:1;' });
     const selB = el('select', { className: 'guild-input', style: 'flex:1;' });
     scs.forEach((s) => {
@@ -864,11 +905,44 @@
     ]);
 
     const card = el('div', { className: 'forge-card' }, [
-      el('div', { className: 'guild-card-title', text: '7-PILLAR MULTI-TURN & PERSISTENCE BENCHMARK' }),
+      el('div', { className: 'guild-card-title', text: 'AUTOMATED CANDIDATE HEAD-TO-HEAD (vs PROGRESSIVE BEST BASELINE)' }),
+      el('div', { className: 'guild-card-meta', text: 'Temporarily stages the selected candidate SVD-32 layer on george-inference, runs the 7-pillar suite against your progressive champion baseline (base model + current active SVD), restores production inference automatically, and presents Accept / Deny controls + Discord DM.' }),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;' }, [
+        selCandRun,
+        el('button', {
+          type: 'button',
+          className: 'guild-btn primary',
+          disabled: pendingRuns.length === 0,
+          text: 'RUN CANDIDATE H2H',
+          on: {
+            click: async () => {
+              const rn = selCandRun.value;
+              if (!rn) return;
+              setConsole(`Launching automated 7-pillar head-to-head for ${rn}...`);
+              const { data } = await apiJson('/api/training/benchmark', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  mode: 'candidate',
+                  run_name: rn,
+                  notify_discord: Boolean(notifyCb.checked),
+                  force_rebaseline: Boolean(reBaseCb.checked),
+                }),
+              });
+              setConsole(data);
+              await refreshAll();
+            },
+          },
+        }),
+      ]),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:14px;margin-top:4px;' }, [
+        el('label', { className: 'eco-check-label' }, [notifyCb, 'DM scorecard + Accept/Deny prompt to Discord when finished']),
+        el('label', { className: 'eco-check-label' }, [reBaseCb, 'Force fresh baseline pass (ignore cached baseline scorecard)']),
+      ]),
+      el('div', { className: 'guild-card-title', style: 'margin-top:10px;', text: 'MANUAL LIVE 7-PILLAR BENCHMARK' }),
       el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;' }, [
         lblIn, famSel,
         el('button', {
-          type: 'button', className: 'guild-btn primary', text: 'RUN LIVE 7-PILLAR BENCHMARK',
+          type: 'button', className: 'guild-btn', text: 'RUN LIVE 7-PILLAR BENCHMARK',
           on: {
             click: async () => {
               const { data } = await apiJson('/api/training/benchmark', {
@@ -880,7 +954,7 @@
           },
         }),
       ]),
-      el('div', { className: 'guild-card-title', style: 'margin-top:8px;', text: 'HEAD-TO-HEAD COMPARISON (e.g. GEMMA-4 31B vs QWEN 3.8 27B)' }),
+      el('div', { className: 'guild-card-title', style: 'margin-top:8px;', text: 'COMPARE ANY TWO SAVED SCORECARDS' }),
       el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;' }, [
         selA, el('span', { text: 'vs' }), selB,
         el('button', {
@@ -892,6 +966,7 @@
                 body: JSON.stringify({ mode: 'head_to_head', file_a: selA.value, file_b: selB.value }),
               });
               state.h2hResult = data;
+              state.h2hRunName = null;
               setConsole(data);
               renderForge();
             },
@@ -927,6 +1002,46 @@
       ]));
       tbl.appendChild(tb);
       card.appendChild(tbl);
+
+      // Second-opportunity decision controls right below the returned Head-to-Head scorecard!
+      const matchRun = allRuns.find((x) => x.name === (state.h2hRunName || h.run) && x.gate_status === 'pending_approval');
+      if (matchRun) {
+        const decBar = el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;padding:10px;border:1px solid rgba(56,189,248,0.35);border-radius:6px;background:rgba(15,23,42,0.55);' }, [
+          el('span', { style: 'font-family:var(--font-mono);font-size:11px;color:#e2e8f0;font-weight:700;', text: `DECISION FOR ${matchRun.name}:` }),
+          el('button', {
+            type: 'button',
+            className: 'guild-btn primary',
+            text: '✓ ACCEPT & PROMOTE LAYER (UPDATES BASELINE)',
+            on: {
+              click: async () => {
+                setConsole(`Approving & promoting ${matchRun.name}...`);
+                const { data } = await apiJson(`/api/training/gate/${encodeURIComponent(matchRun.name)}/approve`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+                });
+                setConsole(data);
+                await refreshAll();
+              },
+            },
+          }),
+          el('button', {
+            type: 'button',
+            className: 'guild-btn danger',
+            text: '✕ DENY LAYER',
+            on: {
+              click: async () => {
+                setConsole(`Denying ${matchRun.name}...`);
+                const { data } = await apiJson(`/api/training/gate/${encodeURIComponent(matchRun.name)}/deny`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ reason: 'Rejected after H2H benchmark review' }),
+                });
+                setConsole(data);
+                await refreshAll();
+              },
+            },
+          }),
+        ]);
+        card.appendChild(decBar);
+      }
     }
 
     return card;

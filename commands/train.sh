@@ -99,6 +99,32 @@ cmd_train() {
             fi
             ;;
 
+        benchmark|h2h)
+            local -a _ba=()
+            read -r -a _ba <<<"$subargs"
+            if [ "${#_ba[@]}" -lt 1 ] || ! [[ "${_ba[0]}" =~ ^[a-z0-9][a-z0-9._-]{1,47}$ ]]; then
+                echo "Usage: /train benchmark <run-name> [--force-rebaseline] [--dry-run] [--notify-discord]"
+                return 1
+            fi
+            local _rn="${_ba[0]}"
+            if [ "${TRAIN_FROM_DISCORD:-0}" = "1" ]; then
+                # Fast preflight first so model mismatches fail immediately in Discord
+                local _pf
+                _pf=$("$py" "$LODGE_DIR/scripts/training/runs.py" benchmark "$_rn" --dry-run 2>&1)
+                if [ $? -ne 0 ]; then
+                    printf '❌ Benchmark preflight failed for `%s`:\n%s\n' "$_rn" "$_pf"
+                    return 1
+                fi
+                local _base_lbl
+                _base_lbl=$(printf '%s' "$_pf" | jq -r '.baseline.label // "fresh baseline capture"' 2>/dev/null || echo "current baseline")
+                local _blog="$LODGE_DIR/.george/training/runs/${_rn}/benchmark_bg.log"
+                nohup "$py" "$LODGE_DIR/scripts/training/runs.py" benchmark "${_ba[@]}" --notify-discord >"$_blog" 2>&1 </dev/null &
+                printf '⏳ **Head-to-Head Benchmark Launched** for `%s` against `%s`.\nI will temporarily stage the candidate SVD-32 layer, run the 7-pillar suite, restore production inference, and DM you the full scorecard with `/train approve %s` / `/train deny %s` options once finished.\n' "$_rn" "$_base_lbl" "$_rn" "$_rn"
+            else
+                "$py" "$LODGE_DIR/scripts/training/runs.py" benchmark "${_ba[@]}" | jq .
+            fi
+            ;;
+
         status|merge|cancel|collect|resume|approve|deny)
             local -a _sa=()
             read -r -a _sa <<<"$subargs"

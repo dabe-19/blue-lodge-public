@@ -98,7 +98,10 @@ pub struct BackupPayload {
 
 #[derive(Deserialize)]
 pub struct BenchmarkPayload {
-    pub mode: Option<String>, // "run" | "head_to_head" | "compare"
+    pub mode: Option<String>, // "run" | "head_to_head" | "compare" | "candidate"
+    pub run_name: Option<String>,
+    pub notify_discord: Option<bool>,
+    pub force_rebaseline: Option<bool>,
     pub endpoint: Option<String>,
     pub label: Option<String>,
     pub model_family: Option<String>,
@@ -361,6 +364,31 @@ pub async fn post_training_action(
             }
             Json(run_py_json(lodge, "scripts/training/forge.py", &args).await)
         }
+        "benchmark" => {
+            let Some(rn) = payload.run_name.filter(|s| plain_id(s, 48)) else {
+                return Json(json!({ "status": "error", "message": "valid run_name is required" }));
+            };
+            let pf = run_py_json(lodge, "scripts/training/runs.py", &["benchmark", &rn, "--dry-run"]).await;
+            if pf.get("status").and_then(|v| v.as_str()) == Some("error") || pf.get("error").is_some() {
+                let msg = pf.get("error").or_else(|| pf.get("message")).and_then(|v| v.as_str()).unwrap_or("Benchmark preflight failed");
+                return Json(json!({ "status": "error", "message": msg, "preflight": pf }));
+            }
+            let lodge_bg = lodge.clone();
+            let rn_bg = rn.clone();
+            tokio::spawn(async move {
+                let _ = run_py_json(
+                    &lodge_bg,
+                    "scripts/training/runs.py",
+                    &["benchmark", &rn_bg, "--notify-discord"],
+                ).await;
+            });
+            Json(json!({
+                "status": "launched",
+                "run_name": rn,
+                "preflight": pf,
+                "message": format!("Automated 7-pillar head-to-head benchmark started for '{}' against progressive baseline. Results will update in Forge UI and DM Discord upon completion.", rn),
+            }))
+        }
         "collect" | "merge" | "resume" | "cancel" | "approve" | "deny" => {
             let Some(rn) = payload.run_name.filter(|s| plain_id(s, 48)) else {
                 return Json(json!({ "status": "error", "message": "valid run_name is required" }));
@@ -437,6 +465,52 @@ pub async fn post_training_benchmark(
 ) -> impl IntoResponse {
     let lodge = &state.lodge_dir;
     let mode = payload.mode.unwrap_or_else(|| "head_to_head".into());
+    if mode == "candidate" {
+        let Some(rn) = payload.run_name.filter(|s| plain_id(s, 48)) else {
+            return Json(json!({ "status": "error", "message": "valid run_name required for candidate benchmark" }));
+        };
+        let mut dry_args: Vec<String> = vec!["benchmark".into(), rn.clone(), "--dry-run".into()];
+        if let Some(ref ep_in) = payload.endpoint {
+            if !ep_in.trim().is_empty() {
+                dry_args.push("--endpoint".into());
+                dry_args.push(ep_in.trim().into());
+            }
+        }
+        if payload.force_rebaseline.unwrap_or(false) {
+            dry_args.push("--force-rebaseline".into());
+        }
+        let dry_refs: Vec<&str> = dry_args.iter().map(|s| s.as_str()).collect();
+        let pf = run_py_json(lodge, "scripts/training/runs.py", &dry_refs).await;
+        if pf.get("status").and_then(|v| v.as_str()) == Some("error") || pf.get("error").is_some() {
+            let msg = pf.get("error").or_else(|| pf.get("message")).and_then(|v| v.as_str()).unwrap_or("Benchmark preflight failed");
+            return Json(json!({ "status": "error", "message": msg, "preflight": pf }));
+        }
+        let mut run_args: Vec<String> = vec!["benchmark".into(), rn.clone()];
+        if let Some(ref ep_in) = payload.endpoint {
+            if !ep_in.trim().is_empty() {
+                run_args.push("--endpoint".into());
+                run_args.push(ep_in.trim().into());
+            }
+        }
+        if payload.notify_discord.unwrap_or(true) {
+            run_args.push("--notify-discord".into());
+        }
+        if payload.force_rebaseline.unwrap_or(false) {
+            run_args.push("--force-rebaseline".into());
+        }
+        let lodge_bg = lodge.clone();
+        tokio::spawn(async move {
+            let refs: Vec<&str> = run_args.iter().map(|s| s.as_str()).collect();
+            let _ = run_py_json(&lodge_bg, "scripts/training/runs.py", &refs).await;
+        });
+        return Json(json!({
+            "status": "launched",
+            "run_name": rn,
+            "preflight": pf,
+            "message": format!("Automated candidate head-to-head started for '{}'. Inference will restore automatically when done.", rn),
+        }));
+    }
+
     if mode == "head_to_head" || mode == "compare" {
         let Some(fa) = payload.file_a else {
             return Json(json!({ "status": "error", "message": "file_a and file_b required" }));

@@ -19,7 +19,7 @@ mkdir -p "$GEORGE_DIR/training"
 _notify_discord() {
     local msg="$1"
     if [ -f "$LODGE_DIR/scripts/monitor/discord_send_report.sh" ]; then
-        bash "$LODGE_DIR/scripts/monitor/discord_send_report.sh" "$msg" >/dev/null 2>&1 || true
+        bash "$LODGE_DIR/scripts/monitor/discord_send_report.sh" "@owner" "$msg" >/dev/null 2>&1 || true
     fi
 }
 
@@ -28,6 +28,7 @@ AUTONOMY_TIER=$(printf '%s' "$POLICY_JSON" | jq -r '.autonomy_tier // "tier_b"')
 TIER_A_MIN_DELTA=$(printf '%s' "$POLICY_JSON" | jq -r '.tier_a_min_delta // 3.0')
 AUTO_BACKUP_DRIVE=$(printf '%s' "$POLICY_JSON" | jq -r '.auto_backup_drive // false')
 AUTO_BACKUP_HF=$(printf '%s' "$POLICY_JSON" | jq -r '.auto_backup_hf // false')
+AUTO_BENCH_ON_MERGE=$(printf '%s' "$POLICY_JSON" | jq -r '.auto_benchmark_on_merge // false')
 
 # 1. Inspect every active running run (Colab keep-alive / collect / auto-resume / SVD-32 merge + gate)
 RUNS_JSON=$("$PY" "$RUNS_PY" list 2>/dev/null || echo '[]')
@@ -48,7 +49,14 @@ printf '%s' "$RUNS_JSON" | jq -c '.[] | select(.state == "running")' 2>/dev/null
         if [ "$new_st" = "done" ]; then
             echo "[watchdog] All tracks complete for '$rname' — running SVD-32 retention fusion..."
             if "$PY" "$RUNS_PY" merge "$rname" >/dev/null 2>&1; then
-                _notify_discord "**[Training Forge — Tier B Gate]** Run \`${rname}\` finished Colab training & SVD-32 fusion! Candidate staged in Forge UI (\`/train approve ${rname}\` or \`/train deny ${rname}\`)."
+                if [ "$AUTO_BENCH_ON_MERGE" = "true" ]; then
+                    echo "[watchdog] auto_benchmark_on_merge=true — running 7-pillar head-to-head for '$rname'..."
+                    if ! "$PY" "$RUNS_PY" benchmark "$rname" --notify-discord >/dev/null 2>&1; then
+                        _notify_discord "**[Training Forge — Tier B Gate]** Run \`${rname}\` finished SVD-32 fusion, but auto-benchmark could not run (check if live inference matches target base model).\n• Run head-to-head manually: \`/train benchmark ${rname}\` (or **Forge → Tier B Gate → BENCHMARK H2H**)\n• Or decide directly: \`/train approve ${rname}\` · \`/train deny ${rname}\`"
+                    fi
+                else
+                    _notify_discord "**[Training Forge — Tier B Gate]** Run \`${rname}\` finished Colab training & SVD-32 fusion and is staged for review!\n• **Run 7-Pillar Head-to-Head vs Current Best Baseline:** \`/train benchmark ${rname}\` (or click **BENCHMARK H2H** in **Models → Training Fleet & Gate** — returns full scorecard + Accept/Deny prompt)\n• **Accept now:** \`/train approve ${rname}\`\n• **Deny:** \`/train deny ${rname}\`"
+                fi
             else
                 _notify_discord "**[Training Forge]** Run \`${rname}\` finished tracks but SVD-32 merge failed — check Forge logs."
             fi

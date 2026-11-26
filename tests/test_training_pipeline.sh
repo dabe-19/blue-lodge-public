@@ -225,6 +225,55 @@ else
     fail "Headless Drive checkpoint sync / token refresh test failed: $DRV_OUT"
 fi
 
+# Test 10: Progressive baseline resolution, advancement on approve_candidate, model_matches_live & Discord card
+BENCH_AUTO_OUT=$("$PY" -B -c "
+import json, os, sys
+sys.path.insert(0, '$LODGE_DIR/scripts/training')
+import runs
+
+# 1. model_matches_live prevents benchmarking Qwen adapter on Gemma-4 server
+assert runs.model_matches_live('gemma-4-31b-it', '/models/hub/unsloth/gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf')
+assert not runs.model_matches_live('qwen3.8-27b', '/models/hub/unsloth/gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf')
+assert not runs.model_matches_live('gemma-4-26b-a4b-it', '/models/hub/unsloth/gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf')
+assert runs.model_matches_live('qwen3.8-27b', '/models/Qwen3.8-27B-UD-Q4_K_S.gguf')
+
+# 2. Progressive baseline advances when approve_candidate promotes a benchmarked run
+rd = os.path.join(runs.runs_dir(), 'prog-test-v1')
+os.makedirs(rd, exist_ok=True)
+cand_dir = os.path.join(runs.role_adapter_dir('gemma-4-31b-it', 'core-agent'), 'candidates')
+cand_file = os.path.join(cand_dir, 'prog-test-v1-svd32.gguf')
+open(cand_file, 'wb').write(b'GGUF_MOCK')
+cand_sc = os.path.join('$TMP', 'cand_prog.json')
+json.dump({'model_label': 'prog-test-v1-svd32', 'overall_score': 88.5, 'early_quit_rate_pct': 0.0}, open(cand_sc, 'w'))
+runs._write_json(os.path.join(rd, 'run.json'), {
+    'name': 'prog-test-v1', 'role': 'core-agent', 'model_slug': 'gemma-4-31b-it', 'backend': 'colab',
+    'gate_status': 'pending_approval',
+    'spec': {'name': 'prog-test-v1', 'role': 'core-agent', 'model_slug': 'gemma-4-31b-it', 'base_model': 'google/gemma-4-31b-it'},
+})
+runs._write_json(os.path.join(rd, 'merged.json'), {'outputs': [cand_file], 'prior_weight': 0.7, 'weights': [0.55, 0.45]})
+runs._write_json(os.path.join(rd, 'benchmark.json'), {
+    'passed': True, 'baseline_label': 'Gemma-4-31B-Baseline', 'candidate_label': 'prog-test-v1-svd32',
+    'baseline_score': 82.9, 'candidate_score': 88.5, 'composite_delta': 5.6,
+    'baseline_early_quit_pct': 0.0, 'candidate_early_quit_pct': 0.0, 'early_quit_delta': 0.0,
+    'candidate_scorecard_path': cand_sc,
+    'pillars': {'Pillar 7: Persistence': {'baseline': 73.2, 'candidate': 90.0, 'delta': 16.8}},
+})
+res = runs.approve_candidate('prog-test-v1', approver='unit_test', apply_live=False)
+assert res['baseline_advanced'] is True and res['version'] == 'v1'
+bl = runs.resolve_baseline('gemma-4-31b-it', 'core-agent')
+assert bl and bl['overall_score'] == 88.5 and bl['adapter_version'] == 'v1', bl
+
+# 3. Discord scorecard card includes metrics and both approve/deny options
+card = runs.format_benchmark_discord_card('prog-test-v1', runs._read_json(os.path.join(rd, 'benchmark.json')))
+assert '82.9%' in card and '88.5%' in card and '/train approve prog-test-v1' in card and '/train deny prog-test-v1' in card
+print('OK')
+" | tail -n 1)
+if [ "$BENCH_AUTO_OUT" = "OK" ] && grep -q 'discord_send_report.sh" "@owner"' "$LODGE_DIR/scripts/cron_system/training_watchdog.sh"; then
+    pass "Progressive baseline advancement, model mismatch guard, Discord H2H card & watchdog @owner delivery work"
+else
+    fail "Progressive baseline / H2H automation test failed: $BENCH_AUTO_OUT"
+fi
+
 echo "──────────────────────────────────────"
 echo "  ${PASS} passed, ${FAIL} failed ($((PASS + FAIL)) total)"
 [ "$FAIL" -eq 0 ]

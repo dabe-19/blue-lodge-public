@@ -69,6 +69,7 @@ DEFAULT_POLICY = {
     "default_prior_weight": 0.70,
     "auto_backup_drive": False,
     "auto_backup_hf": False,
+    "auto_benchmark_on_merge": False,
     "hf_backup_repo": "",
     "drive_backup_folder": "BlueLodge/models/adapters",
 }
@@ -1424,6 +1425,7 @@ def status(name):
                 tracks[tp["track"]]["error"] = tp["error"]
     merged = _read_json(os.path.join(rd, "merged.json"))
     bench = _read_json(os.path.join(rd, "benchmark.json"))
+    bench_st = _read_json(os.path.join(rd, "benchmark_status.json"))
     return {
         "name": name, "role": meta.get("role", spec.get("role", "core-agent")),
         "model_slug": meta.get("model_slug", spec.get("model_slug", "")),
@@ -1431,7 +1433,7 @@ def status(name):
         "backend": meta.get("backend"), "state": run_state, "created": meta.get("created"),
         "gate_status": meta.get("gate_status", "pending"),
         "prior_adapter_weight": (spec.get("merge") or {}).get("prior_adapter_weight", 0.70),
-        "tracks": tracks, "merged": merged, "benchmark": bench, "dir": rd,
+        "tracks": tracks, "merged": merged, "benchmark": bench, "benchmark_status": bench_st, "dir": rd,
     }
 
 
@@ -1571,8 +1573,385 @@ def merge(name):
     return res
 
 
-def approve_candidate(name: str, approver: str = "operator") -> dict:
-    """Tier B (or Tier A) promotion: moves candidate -> releases/, updates active.gguf & lineage.json."""
+def _norm_model_tokens(text: str) -> set[str]:
+    low = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+    stop = {"gguf", "it", "ud", "q4", "q5", "q6", "q8", "k", "xl", "s", "m", "l", "f16", "bf16", "unsloth", "google", "qwen", "models", "hub", "huggingface", "base", "baseline"}
+    return {t for t in low.split() if t and t not in stop}
+
+
+def model_matches_live(model_slug: str, live_model_path: str) -> bool:
+    """Verify that the live llama-server base model matches the candidate adapter's target model_slug."""
+    slug_l = (model_slug or "").lower()
+    live_l = os.path.basename(live_model_path or "").lower()
+    if not slug_l or not live_l:
+        return False
+    # Exact key anchors for known families so 31b never matches 26b or qwen3.8-27b
+    anchors = ("31b", "27b", "26b", "e4b", "e2b", "14b", "9b", "8b", "7b", "4b")
+    for a in anchors:
+        if a in slug_l and a not in live_l:
+            return False
+    for fam in ("gemma", "qwen", "llama", "mistral", "deepseek"):
+        if fam in slug_l and fam not in live_l:
+            return False
+    s_toks = _norm_model_tokens(slug_l)
+    l_toks = _norm_model_tokens(live_l)
+    return bool(s_toks and len(s_toks & l_toks) >= min(2, len(s_toks)))
+
+
+def _default_inference_endpoint() -> str:
+    if os.environ.get("KUBERNETES_SERVICE_HOST"):
+        return "http://george-inference:8080"
+    return "http://127.0.0.1:8080"
+
+
+def _to_container_model_path(host_path: str) -> str:
+    """Map host MODELS_DIR paths into /models/... inside george-inference container."""
+    p = os.path.realpath(host_path) if os.path.exists(host_path) else host_path
+    md = os.path.realpath(models_dir())
+    if p.startswith("/models/"):
+        return p
+    if p.startswith(md + "/"):
+        return "/models/" + p[len(md) + 1:]
+    if "/models/" in p:
+        return "/models/" + p.split("/models/", 1)[1]
+    return p
+
+
+def _probe_live_inference(endpoint: str) -> dict:
+    base = endpoint.rstrip("/")
+    out = {"reachable": False, "endpoint": base, "model_path": "", "adapters": []}
+    try:
+        with urllib.request.urlopen(f"{base}/props", timeout=8) as resp:
+            props = json.loads(resp.read().decode("utf-8"))
+            out["model_path"] = props.get("model_path") or ""
+            out["reachable"] = True
+    except Exception as e:
+        out["error"] = str(e)
+        return out
+    try:
+        with urllib.request.urlopen(f"{base}/lora-adapters", timeout=8) as resp:
+            out["adapters"] = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        pass
+    return out
+
+
+def resolve_baseline(model_slug: str, role: str = "core-agent") -> dict | None:
+    """Resolve the progressively-updated champion baseline scorecard for (model_slug, role).
+    1. Use lineage.json['baseline'] if present and scorecard file exists.
+    2. Otherwise scan benchmarks/results/multiturn_*.json matching model_slug and seed lineage.json['baseline'].
+    """
+    role_dir = role_adapter_dir(model_slug, role)
+    lineage_p = os.path.join(role_dir, "lineage.json")
+    lineage = _read_json(lineage_p, {"model_slug": model_slug, "role": role, "releases": [], "backups": []})
+    saved = lineage.get("baseline")
+    if isinstance(saved, dict):
+        sp = saved.get("scorecard_path") or ""
+        if sp and not os.path.isabs(sp):
+            sp_abs = os.path.join(LODGE, sp)
+        else:
+            sp_abs = sp
+        if sp_abs and os.path.isfile(sp_abs):
+            sc = _read_json(sp_abs, {})
+            if sc.get("overall_score") is not None:
+                return {**saved, "scorecard_path": sp_abs, "scorecard": sc}
+
+    # Auto-discover best matching saved baseline scorecard in benchmarks/results/
+    bench_dir = os.path.join(LODGE, "benchmarks", "results")
+    candidates = []
+    for p in sorted(glob.glob(os.path.join(bench_dir, "multiturn_*.json"))):
+        sc = _read_json(p, {})
+        if not isinstance(sc, dict) or sc.get("overall_score") is None:
+            continue
+        lbl = f"{sc.get('model_label', '')} {os.path.basename(p)}"
+        if model_matches_live(model_slug, lbl):
+            is_base = "baseline" in lbl.lower()
+            candidates.append((1 if is_base else 0, float(sc.get("overall_score", 0.0)), os.path.getmtime(p), p, sc))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+    _, _, _, best_p, best_sc = candidates[0]
+    rel_p = os.path.relpath(best_p, LODGE) if best_p.startswith(LODGE + os.sep) else best_p
+    entry = {
+        "label": best_sc.get("model_label", os.path.basename(best_p)),
+        "scorecard_path": rel_p,
+        "overall_score": float(best_sc.get("overall_score", 0.0)),
+        "early_quit_rate_pct": float(best_sc.get("early_quit_rate_pct", 0.0)),
+        "adapter_version": lineage.get("active"),
+        "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+    }
+    lineage["baseline"] = entry
+    _write_json(lineage_p, lineage)
+    return {**entry, "scorecard_path": best_p, "scorecard": best_sc}
+
+
+def _restart_inference_deployment(endpoint: str, expect_lora: bool = False, timeout_s: int = 240) -> dict:
+    """Restart k3s deploy/george-inference and wait until /health is 200 (and optional LoRA loaded)."""
+    kubectl = shutil.which("kubectl")
+    if not kubectl:
+        raise SpecError("kubectl not found — cannot cycle deploy/george-inference for candidate benchmark")
+    r1 = subprocess.run(
+        [kubectl, "-n", "blue-lodge", "rollout", "restart", "deploy/george-inference"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    if r1.returncode != 0:
+        raise SpecError(f"kubectl rollout restart failed: {(r1.stderr or r1.stdout).strip()[-240:]}")
+    r2 = subprocess.run(
+        [kubectl, "-n", "blue-lodge", "rollout", "status", "deploy/george-inference", f"--timeout={timeout_s}s"],
+        capture_output=True, text=True, timeout=timeout_s + 15, check=False,
+    )
+    if r2.returncode != 0:
+        raise SpecError(f"george-inference rollout failed: {(r2.stderr or r2.stdout).strip()[-240:]}")
+    deadline = time.time() + 90
+    base = endpoint.rstrip("/")
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"{base}/health", timeout=5) as resp:
+                if resp.status == 200:
+                    st = _probe_live_inference(base)
+                    if not expect_lora or st.get("adapters"):
+                        return st
+        except Exception:
+            pass
+        time.sleep(2)
+    raise SpecError(f"george-inference did not report healthy{' with LoRA loaded' if expect_lora else ''} within 90s")
+
+
+def format_benchmark_discord_card(run_name: str, verdict: dict) -> str:
+    """Build a concise Discord Markdown head-to-head scorecard with Accept/Deny decision options."""
+    passed = bool(verdict.get("passed"))
+    badge = "✅ GATE PASS" if passed else "⚠️ GATE BELOW THRESHOLD"
+    b_sc = verdict.get("baseline_score", 0.0)
+    c_sc = verdict.get("candidate_score", 0.0)
+    delta = float(verdict.get("composite_delta", 0.0))
+    b_eq = verdict.get("baseline_early_quit_pct", 0.0)
+    c_eq = verdict.get("candidate_early_quit_pct", 0.0)
+    eq_d = float(verdict.get("early_quit_delta", 0.0))
+    base_lbl = verdict.get("baseline_label", "baseline")
+    cand_lbl = verdict.get("candidate_label", run_name)
+    lines = [
+        f"**[Training Forge — 7-Pillar Head-to-Head Scorecard]** `{run_name}` ({badge})",
+        f"**Baseline:** `{base_lbl}` → **Candidate:** `{cand_lbl}`",
+        f"• **Composite:** `{b_sc}%` → **`{c_sc}%`** (**{delta:+.1f}%**)",
+        f"• **Early-Quit Rate:** `{b_eq}%` → `{c_eq}%` ({eq_d:+.1f}%)",
+        "",
+        "**Per-Pillar Breakdown:**",
+    ]
+    for p, vals in (verdict.get("pillars") or {}).items():
+        short = p.split(":", 1)[1].strip() if ":" in p else p
+        d = float(vals.get("delta", 0.0))
+        lines.append(f"• {short[:48]}: `{vals.get('baseline', 0)}%` → `{vals.get('candidate', 0)}%` ({d:+.1f}%)")
+    lines.extend([
+        "",
+        "**Decision Options (Inference restored to production baseline):**",
+        f"• Accept & promote SVD-32 layer: `/train approve {run_name}` (or click **ACCEPT** in Forge UI)",
+        f"• Reject & keep current baseline: `/train deny {run_name}` (or click **DENY** in Forge UI)",
+    ])
+    return "\n".join(lines)
+
+
+def send_discord_report(message: str, recipient: str = "@owner") -> bool:
+    script = os.path.join(LODGE, "scripts", "monitor", "discord_send_report.sh")
+    if not os.path.isfile(script):
+        return False
+    r = subprocess.run(
+        ["bash", script, recipient, message],
+        capture_output=True, text=True, timeout=30, check=False,
+        env={**os.environ, "LODGE_DIR": LODGE, "GEORGE_DIR": GEORGE},
+    )
+    return r.returncode == 0
+
+
+def benchmark_candidate(
+    name: str,
+    endpoint: str | None = None,
+    min_delta: float | None = None,
+    notify_discord: bool = False,
+    dry_run: bool = False,
+    force_rebaseline: bool = False,
+) -> dict:
+    """Automated 7-pillar head-to-head benchmark for a staged SVD-32 candidate against the progressive
+    champion baseline (base model + current active.gguf). Always restores production inference afterward."""
+    rd = run_dir(name)
+    meta = _read_json(os.path.join(rd, "run.json"), {})
+    merged = _read_json(os.path.join(rd, "merged.json"), {})
+    outs = merged.get("outputs") or []
+    if not outs or not os.path.isfile(outs[0]):
+        raise SpecError(f"No merged candidate GGUF found for run '{name}' (run 'runs.py merge {name}' first).")
+    cand_host = outs[0]
+    v = meta.get("spec") or {}
+    model_slug = meta.get("model_slug") or v.get("model_slug") or "default"
+    role = meta.get("role") or v.get("role") or "core-agent"
+    ep = (endpoint or _default_inference_endpoint()).rstrip("/")
+    pol = load_policy()
+    req_delta = float(min_delta) if min_delta is not None else 0.0
+
+    # 1. Verify live inference server & base model match
+    live = _probe_live_inference(ep)
+    if not live.get("reachable"):
+        raise SpecError(f"Inference endpoint {ep} is unreachable: {live.get('error', 'connection failed')}")
+    live_model = live.get("model_path") or ""
+    if not model_matches_live(model_slug, live_model):
+        raise SpecError(
+            f"Base model mismatch: live inference is serving '{os.path.basename(live_model)}', "
+            f"but candidate '{name}' targets '{model_slug}'. Activate '{model_slug}' in Model Hub first "
+            f"(or pass --endpoint pointing to a node serving '{model_slug}')."
+        )
+
+    role_dir = role_adapter_dir(model_slug, role)
+    active_link = os.path.join(role_dir, "active.gguf")
+    active_host = os.path.realpath(active_link) if os.path.isfile(active_link) else None
+    baseline = None if force_rebaseline else resolve_baseline(model_slug, role)
+
+    plan = {
+        "status": "planned",
+        "run": name,
+        "model_slug": model_slug,
+        "role": role,
+        "endpoint": ep,
+        "live_model": os.path.basename(live_model),
+        "candidate_path": cand_host,
+        "active_path": active_host,
+        "baseline": {k: baseline[k] for k in ("label", "scorecard_path", "overall_score", "early_quit_rate_pct", "adapter_version") if k in baseline} if baseline else None,
+        "will_capture_baseline": baseline is None,
+        "min_delta": req_delta,
+    }
+    if dry_run:
+        return plan
+
+    bench_py = os.path.join(LODGE, "scripts", "eval", "multiturn_bench.py")
+    py_bin = os.path.join(LODGE, ".venv", "bin", "python3")
+    if not _exe(py_bin):
+        py_bin = sys.executable
+    status_p = os.path.join(rd, "benchmark_status.json")
+    override_p = os.path.join(GEORGE, "training", "bench_override.json")
+
+    def _set_stage(stage: str, st: str = "running", err: str | None = None):
+        _write_json(status_p, {
+            "status": st, "stage": stage, "run": name, "endpoint": ep,
+            "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "error": err,
+        })
+
+    _set_stage("staging_candidate_lora")
+    cand_ctr = _to_container_model_path(cand_host)
+    active_ctr = _to_container_model_path(active_host) if active_host else None
+    if active_ctr:
+        lora_scaled = f"{active_ctr}:0.0,{cand_ctr}:1.0"
+        cand_id, active_id = 1, 0
+    else:
+        lora_scaled = f"{cand_ctr}:1.0"
+        cand_id, active_id = 0, None
+
+    _write_json(override_p, {
+        "run": name,
+        "model_slug": model_slug,
+        "role": role,
+        "candidate_path": cand_ctr,
+        "active_path": active_ctr,
+        "lora_scaled": lora_scaled,
+        "created_at": dt.datetime.now().isoformat(timespec="seconds"),
+    })
+
+    def _run_bench_pass(label: str) -> tuple[str, dict]:
+        fam = "gemma4" if "gemma" in model_slug else ("qwen" if "qwen" in model_slug else "auto")
+        ts_now = int(time.time())
+        safe_lbl = re.sub(r"[^A-Za-z0-9._-]", "_", label)[:40]
+        out_json = os.path.join(LODGE, "benchmarks", "results", f"multiturn_7pillar_{safe_lbl}_{ts_now}.json")
+        r = subprocess.run(
+            [py_bin, bench_py, "--endpoint", ep, "--label", label, "--model-family", fam, "--output", out_json, "--json"],
+            capture_output=True, text=True, timeout=3600, stdin=subprocess.DEVNULL, check=False,
+            env={**os.environ, "LODGE_DIR": LODGE, "GEORGE_DIR": GEORGE},
+        )
+        if r.returncode != 0 or not os.path.isfile(out_json):
+            raise SpecError(f"multiturn_bench failed for {label}: {(r.stderr or r.stdout).strip()[-400:]}")
+        return out_json, _read_json(out_json, {})
+
+    try:
+        _set_stage("restarting_inference_with_candidate")
+        _restart_inference_deployment(ep, expect_lora=True)
+
+        # Capture fresh progressive baseline if none exists or forced
+        if baseline is None:
+            _set_stage("running_baseline_7pillar")
+            scales_base = [{"id": cand_id, "scale": 0.0}]
+            if active_id is not None:
+                scales_base.insert(0, {"id": active_id, "scale": 1.0})
+            hotswap_lora(ep, scales_base)
+            lineage_p = os.path.join(role_dir, "lineage.json")
+            lineage = _read_json(lineage_p, {"model_slug": model_slug, "role": role, "releases": [], "backups": []})
+            act_ver = lineage.get("active")
+            base_lbl = f"{model_slug}-{act_ver}-baseline" if act_ver else f"{model_slug}-base-baseline"
+            base_path, base_sc = _run_bench_pass(base_lbl)
+            rel_bp = os.path.relpath(base_path, LODGE) if base_path.startswith(LODGE + os.sep) else base_path
+            lineage["baseline"] = {
+                "label": base_sc.get("model_label", base_lbl),
+                "scorecard_path": rel_bp,
+                "overall_score": float(base_sc.get("overall_score", 0.0)),
+                "early_quit_rate_pct": float(base_sc.get("early_quit_rate_pct", 0.0)),
+                "adapter_version": act_ver,
+                "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+            }
+            _write_json(lineage_p, lineage)
+            baseline = {**lineage["baseline"], "scorecard_path": base_path, "scorecard": base_sc}
+
+        # Run candidate 7-pillar evaluation with candidate scale=1.0
+        _set_stage("running_candidate_7pillar")
+        scales_cand = [{"id": cand_id, "scale": 1.0}]
+        if active_id is not None:
+            scales_cand.insert(0, {"id": active_id, "scale": 0.0})
+        hotswap_lora(ep, scales_cand)
+        cand_sc_path, cand_sc = _run_bench_pass(f"{name}-svd32")
+
+        # Compare candidate vs progressive baseline
+        _set_stage("computing_head_to_head_verdict")
+        r_cmp = subprocess.run(
+            [py_bin, bench_py, "--compare", baseline["scorecard_path"], cand_sc_path, "--min-delta", str(req_delta)],
+            capture_output=True, text=True, timeout=60, check=False,
+            env={**os.environ, "LODGE_DIR": LODGE, "GEORGE_DIR": GEORGE},
+        )
+        try:
+            verdict = json.loads(r_cmp.stdout)
+        except ValueError as e:
+            raise SpecError(f"Failed to parse benchmark comparison JSON: {e}") from None
+
+        verdict.update({
+            "run": name,
+            "model_slug": model_slug,
+            "role": role,
+            "candidate_path": cand_host,
+            "baseline_scorecard_path": os.path.relpath(baseline["scorecard_path"], LODGE) if baseline["scorecard_path"].startswith(LODGE + os.sep) else baseline["scorecard_path"],
+            "candidate_scorecard_path": os.path.relpath(cand_sc_path, LODGE) if cand_sc_path.startswith(LODGE + os.sep) else cand_sc_path,
+            "baseline_adapter_version": baseline.get("adapter_version"),
+            "benchmarked_at": dt.datetime.now().isoformat(timespec="seconds"),
+        })
+        _write_json(os.path.join(rd, "benchmark.json"), verdict)
+    except Exception as e:
+        _set_stage("failed", st="error", err=str(e))
+        raise
+    finally:
+        # Always remove ephemeral benchmark staging override and restore production inference!
+        try:
+            if os.path.exists(override_p):
+                os.remove(override_p)
+        except OSError:
+            pass
+        try:
+            _restart_inference_deployment(ep, expect_lora=False)
+        except Exception:
+            pass
+
+    _set_stage("complete", st="done")
+    discord_sent = False
+    if notify_discord:
+        card = format_benchmark_discord_card(name, verdict)
+        discord_sent = send_discord_report(card, "@owner")
+    return {"status": "ok", "discord_notified": discord_sent, **verdict}
+
+
+def approve_candidate(name: str, approver: str = "operator", apply_live: bool = True) -> dict:
+    """Tier B (or Tier A) promotion: moves candidate -> releases/, updates active.gguf & lineage.json,
+    progressively advances the champion baseline scorecard, and reloads live inference if model matches."""
     rd = run_dir(name)
     meta = _read_json(os.path.join(rd, "run.json"), {})
     merged = _read_json(os.path.join(rd, "merged.json"), {})
@@ -1604,14 +1983,44 @@ def approve_candidate(name: str, approver: str = "operator") -> dict:
     }
     lineage.setdefault("releases", []).append(entry)
     lineage["active"] = entry["version"]
+
+    # Progressively advance the champion baseline scorecard so the NEXT run competes against base + active vN!
+    baseline_advanced = False
+    if isinstance(bench, dict) and bench.get("candidate_scorecard_path"):
+        lineage["baseline"] = {
+            "label": bench.get("candidate_label") or f"{name}-svd32",
+            "scorecard_path": bench["candidate_scorecard_path"],
+            "overall_score": float(bench.get("candidate_score", 0.0)),
+            "early_quit_rate_pct": float(bench.get("candidate_early_quit_pct", 0.0)),
+            "adapter_version": entry["version"],
+            "run": name,
+            "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+        }
+        baseline_advanced = True
     _write_json(lineage_p, lineage)
 
     meta["gate_status"] = "approved"
     meta["promoted_release"] = rel_path
     _write_json(os.path.join(rd, "run.json"), meta)
-    with open(os.path.join(rd, "state"), "w") as fh:
-        fh.write("promoted\n")
-    return {"status": "ok", "name": name, "version": entry["version"], "active_path": active_link, "release_path": rel_path}
+    _write_text(os.path.join(rd, "state"), "promoted\n")
+
+    # Best-effort reload of live george-inference when the active base model matches this adapter
+    reloaded = False
+    if apply_live and shutil.which("kubectl"):
+        try:
+            ep = _default_inference_endpoint()
+            live = _probe_live_inference(ep)
+            if live.get("reachable") and model_matches_live(v["model_slug"], live.get("model_path", "")):
+                _restart_inference_deployment(ep, expect_lora=True)
+                reloaded = True
+        except Exception:
+            reloaded = False
+
+    return {
+        "status": "ok", "name": name, "version": entry["version"],
+        "active_path": active_link, "release_path": rel_path,
+        "baseline_advanced": baseline_advanced, "inference_reloaded": reloaded,
+    }
 
 
 def deny_candidate(name: str, reason: str = "Denied by operator") -> dict:
@@ -1638,6 +2047,7 @@ def list_adapters() -> list[dict]:
             "role": lin.get("role", os.path.basename(role_dir)),
             "active_version": lin.get("active"),
             "active_path": os.path.realpath(active) if os.path.exists(active) else None,
+            "baseline": lin.get("baseline"),
             "releases": lin.get("releases", []),
             "backups": lin.get("backups", []),
         })
@@ -1757,6 +2167,14 @@ def main(argv=None):
     pa = sub.add_parser("approve")
     pa.add_argument("name")
     pa.add_argument("--approver", default="operator")
+    pa.add_argument("--no-restart", action="store_true")
+    pbm = sub.add_parser("benchmark")
+    pbm.add_argument("name")
+    pbm.add_argument("--endpoint", default=None)
+    pbm.add_argument("--min-delta", type=float, default=None)
+    pbm.add_argument("--notify-discord", action="store_true")
+    pbm.add_argument("--force-rebaseline", action="store_true")
+    pbm.add_argument("--dry-run", action="store_true")
     pd = sub.add_parser("deny")
     pd.add_argument("name")
     pd.add_argument("--reason", default="Denied by operator")
@@ -1788,7 +2206,16 @@ def main(argv=None):
         elif a.cmd == "policy":
             res = save_policy(json.loads(a.set_json)) if a.set_json else load_policy()
         elif a.cmd == "approve":
-            res = approve_candidate(a.name, a.approver)
+            res = approve_candidate(a.name, a.approver, apply_live=not a.no_restart)
+        elif a.cmd == "benchmark":
+            res = benchmark_candidate(
+                a.name,
+                endpoint=a.endpoint,
+                min_delta=a.min_delta,
+                notify_discord=a.notify_discord,
+                dry_run=a.dry_run,
+                force_rebaseline=a.force_rebaseline,
+            )
         elif a.cmd == "deny":
             res = deny_candidate(a.name, a.reason)
         elif a.cmd == "hotswap":

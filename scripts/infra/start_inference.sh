@@ -78,12 +78,43 @@ if [[ "$TARGET_MODEL" == *"Qwen3.8"* ]] || [[ "$TARGET_MODEL" == *"Champion"* ]]
 fi
 
 # ── LoRA / SVD-32 Adapter Attachment & Multi-Role Hot-Swap Preloading ──
-# Supports:
+# Precedence:
+#   0. /workspace/.george/training/bench_override.json (ephemeral candidate H2H benchmark staging)
 #   1. LLAMA_ARG_LORA_SCALED="pathA.gguf:1.0,pathB.gguf:0.0"  (hot-swappable via POST /lora-adapters)
-#   2. LLAMA_ARG_LORA="/models/adapters/<model>/<role>/active.gguf" or /models/active/current/adapter.gguf
-#   3. /models/active/current/adapters.conf (one "path[:scale]" per line for multi-role preloading)
+#   2. /models/active/current/adapters.conf (one "path[:scale]" per line for multi-role preloading)
+#   3. LLAMA_ARG_LORA / /models/active/current/adapter.gguf
+#   4. Auto-discovered /models/adapters/<detected_model_slug>/core-agent/active.gguf
+_detect_model_slug() {
+    local low
+    low=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+    case "$low" in
+        *gemma-4-31b*|*gemma4-31b*) echo "gemma-4-31b-it" ;;
+        *gemma-4-26b*|*gemma4-26b*) echo "gemma-4-26b-a4b-it" ;;
+        *gemma-4-e4b*|*gemma4-e4b*) echo "gemma-4-e4b-it" ;;
+        *gemma-4-e2b*|*gemma4-e2b*) echo "gemma-4-e2b-it" ;;
+        *qwen3.8-27b*|*qwen38-27b*) echo "qwen3.8-27b" ;;
+        *) echo "" ;;
+    esac
+}
 REAL_BASE_MODEL=$(readlink -f "$TARGET_MODEL" 2>/dev/null || echo "$TARGET_MODEL")
-if [[ "$REAL_BASE_MODEL" == *"Baked"* ]] || [[ "$REAL_BASE_MODEL" == *"Merged"* ]] || [ -f "/models/active/current/.lora_baked" ]; then
+DETECTED_SLUG=$(_detect_model_slug "$REAL_BASE_MODEL")
+BENCH_OVERRIDE="/workspace/.george/training/bench_override.json"
+BENCH_LORA_SCALED=""
+if [ -f "$BENCH_OVERRIDE" ] && command -v jq &>/dev/null; then
+    _ov_slug=$(jq -r '.model_slug // empty' "$BENCH_OVERRIDE" 2>/dev/null || true)
+    _ov_scaled=$(jq -r '.lora_scaled // empty' "$BENCH_OVERRIDE" 2>/dev/null || true)
+    _ov_cand=$(jq -r '.candidate_path // empty' "$BENCH_OVERRIDE" 2>/dev/null || true)
+    if [ -n "$_ov_scaled" ] && [ -n "$_ov_cand" ] && [ -f "$_ov_cand" ]; then
+        if [ -z "$_ov_slug" ] || [ -z "$DETECTED_SLUG" ] || [ "$_ov_slug" = "$DETECTED_SLUG" ]; then
+            BENCH_LORA_SCALED="$_ov_scaled"
+        fi
+    fi
+fi
+
+if [ -n "$BENCH_LORA_SCALED" ]; then
+    echo "[+] [BENCHMARK MODE] Staging hot-swappable candidate LoRA/SVD adapters: ${BENCH_LORA_SCALED}"
+    ARGS+=("--lora-scaled" "${BENCH_LORA_SCALED}")
+elif [[ "$REAL_BASE_MODEL" == *"Baked"* ]] || [[ "$REAL_BASE_MODEL" == *"Merged"* ]] || [ -f "/models/active/current/.lora_baked" ]; then
     echo "[+] Base model ($REAL_BASE_MODEL) already has LoRA weights baked in — skipping runtime --lora attachment."
 elif [ -n "${LLAMA_ARG_LORA_SCALED:-}" ]; then
     echo "[+] Preloading hot-swappable LoRA/SVD adapters: ${LLAMA_ARG_LORA_SCALED}"
@@ -111,11 +142,13 @@ else
             LORA_PATH="/models/active/current/adapter.gguf"
         elif [ -f "/models/active/current/champion.gguf" ]; then
             LORA_PATH="/models/active/current/champion.gguf"
+        elif [ -n "$DETECTED_SLUG" ] && [ -f "/models/adapters/${DETECTED_SLUG}/core-agent/active.gguf" ]; then
+            LORA_PATH="/models/adapters/${DETECTED_SLUG}/core-agent/active.gguf"
         fi
     fi
     if [ -n "$LORA_PATH" ] && [ -f "$LORA_PATH" ]; then
         echo "[+] Attaching LoRA/SVD Adapter: $LORA_PATH"
-        ARGS+=("--lora" "$LORA_PATH")
+        ARGS+=("--lora-scaled" "${LORA_PATH}:1.0")
     fi
 fi
 
